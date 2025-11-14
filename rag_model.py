@@ -6,66 +6,63 @@ from langchain_community.vectorstores import Chroma
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.chains import ConversationalRetrievalChain
+from fastapi import HTTPException # Used for handling uninitialized state
 
 # --- Configuration ---
 VECTOR_DB_DIR = "vector_db"
 POLICY_DIRECTORY_PATH = "policy/" 
 
-# --- Initialization ---
-# 1. Get API Key from environment variable (loaded by start.py on local, by Railway on prod)
-# We check for the common environment variable names.
-gemini_api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+# --- Global Components (Initialized to None) ---
+# These must be None initially so the server can start instantly.
+vectorstore = None
+rag_chain = None
 
-if not gemini_api_key:
-    # This check ensures the system stops immediately if the key is missing.
-    raise ValueError("API Key (GEMINI_API_KEY or GOOGLE_API_KEY) not found. Check your environment.")
+# --- Initialization Helpers (Unchanged Logic) ---
 
-# 2. Force the key into the environment variable that LangChain is often hard-coded to check.
-# This ensures the key is available to the entire Google client library stack.
-os.environ["GOOGLE_API_KEY"] = gemini_api_key 
+def get_gemini_api_key():
+    """Gets the API key from environment variables, checking both common names."""
+    gemini_api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if not gemini_api_key:
+        raise ValueError("API Key (GEMINI_API_KEY or GOOGLE_API_KEY) not found. Check your environment.")
+    return gemini_api_key
 
-# 3. Initialize the clients. Since the key is set in os.environ, constructors are simple.
-# NOTE: The client is initialized implicitly using the GOOGLE_API_KEY.
+def create_rag_clients():
+    """Initializes the LLM and Embedding clients."""
+    gemini_api_key = get_gemini_api_key()
+    
+    # Force the key into the environment variable that LangChain is often hard-coded to check.
+    os.environ["GOOGLE_API_KEY"] = gemini_api_key 
 
-embeddings = GoogleGenerativeAIEmbeddings(
-    model="models/embedding-001"
-) 
+    embeddings_client = GoogleGenerativeAIEmbeddings(
+        model="models/embedding-001"
+    ) 
 
-llm = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash", 
-    temperature=0.1
-)
+    llm_client = ChatGoogleGenerativeAI(
+        model="gemini-2.5-flash", 
+        temperature=0.1
+    )
+    return embeddings_client, llm_client
 
-# Initialize chat history for the RAG chain
-chat_history = []
-
-def create_vector_store():
-    """
-    Loads ALL PDFs from the specified directory, splits them into chunks, 
-    and creates a single Chroma vector store.
-    """
+def create_vector_store(embeddings_client):
+    """Loads all documents, chunks them, and creates/persists the Chroma vector store."""
     all_documents = []
     
-    # 1. Iterate through all files in the policy directory
     print(f"Loading documents from directory: {POLICY_DIRECTORY_PATH}")
     for filename in os.listdir(POLICY_DIRECTORY_PATH):
         if filename.endswith(".pdf"):
             file_path = os.path.join(POLICY_DIRECTORY_PATH, filename)
             print(f"  - Loading {filename}...")
             
-            # Load the document using PyPDFLoader
             loader = PyPDFLoader(file_path)
             documents = loader.load()
             
             for doc in documents:
-                # Add source metadata for citation
                 doc.metadata['source'] = filename
             
             all_documents.extend(documents)
 
     print(f"Successfully loaded a total of {len(all_documents)} pages from all PDFs.")
 
-    # 2. Split documents into smaller, manageable chunks
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=1000,
         chunk_overlap=200
@@ -73,58 +70,86 @@ def create_vector_store():
     texts = text_splitter.split_documents(all_documents)
     print(f"Split document corpus into {len(texts)} chunks for indexing.")
 
-    # 3. Create the vector store and persist it to disk
     print(f"Creating and persisting vector store to {VECTOR_DB_DIR}...")
-    vectorstore = Chroma.from_documents(
+    vectorstore_instance = Chroma.from_documents(
         documents=texts,
-        embedding=embeddings,
+        embedding=embeddings_client,
         persist_directory=VECTOR_DB_DIR
     )
-    vectorstore.persist()
+    vectorstore_instance.persist()
     print("Vector store creation complete.")
-    return vectorstore
+    return vectorstore_instance
 
-def get_or_create_vector_store():
-    """
-    Checks if the vector store already exists on disk. If so, it loads it.
-    If not, it creates and saves it.
-    """
+def get_or_create_vector_store(embeddings_client):
+    """Checks if the vector store exists; if not, creates it."""
     if os.path.exists(VECTOR_DB_DIR):
         print(f"Loading existing vector store from {VECTOR_DB_DIR}...")
-        vectorstore = Chroma(
+        vectorstore_instance = Chroma(
             persist_directory=VECTOR_DB_DIR,
-            embedding_function=embeddings
+            embedding_function=embeddings_client
         )
         print("Vector store loaded successfully.")
     else:
         print("Vector store not found. Creating a new one...")
-        vectorstore = create_vector_store()
+        vectorstore_instance = create_vector_store(embeddings_client)
 
-    return vectorstore
+    return vectorstore_instance
 
-def create_rag_chain(vector_store):
-    """
-    Creates the Conversational Retrieval Chain using the LLM and the vector store.
-    """
-    retriever = vector_store.as_retriever(search_kwargs={"k": 5})
+def create_rag_chain(vector_store_instance, llm_client):
+    """Creates the Conversational Retrieval Chain."""
+    retriever = vector_store_instance.as_retriever(search_kwargs={"k": 5})
     
     qa_chain = ConversationalRetrievalChain.from_llm(
-        llm=llm,
+        llm=llm_client,
         retriever=retriever,
         return_source_documents=True
     )
     return qa_chain
 
-# Global instance of the RAG chain
-vectorstore = get_or_create_vector_store()
-rag_chain = create_rag_chain(vectorstore)
+# --- CRITICAL: Function to be run in the background thread ---
+def initialize_rag_components():
+    """Initializes the heavy RAG components asynchronously."""
+    global vectorstore
+    global rag_chain
+    
+    try:
+        embeddings_client, llm_client = create_rag_clients()
+        
+        # 1. Initialize Vector Store (the heavy part)
+        vectorstore = get_or_create_vector_store(embeddings_client)
+        
+        # 2. Create the RAG chain
+        rag_chain = create_rag_chain(vectorstore, llm_client)
+        
+        print("RAG components fully initialized and ready for queries.")
+    except Exception as e:
+        print(f"CRITICAL RAG INITIALIZATION FAILURE: {e}")
+        # Setting rag_chain to False (or a specific error value) can prevent future crashes
+        rag_chain = False 
+
+
+# Initialize chat history for the RAG chain
+chat_history = []
 
 def query_rag_system(question: str):
     """
     Executes a query against the RAG system and updates the chat history.
     """
     global chat_history
+    global rag_chain
     
+    # CRITICAL: If initialization is not complete, return a 503 error instead of crashing the server.
+    if rag_chain is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Service is starting up. RAG components are still initializing (503)."
+        )
+    if rag_chain is False:
+        raise HTTPException(
+            status_code=500,
+            detail="RAG initialization failed. Check server logs for critical errors."
+        )
+
     result = rag_chain.invoke(
         {"question": question, "chat_history": chat_history}
     )
@@ -145,5 +170,10 @@ def query_rag_system(question: str):
 def clear_chat_history():
     """Clears the session's chat history."""
     global chat_history
+    global rag_chain
+
+    if rag_chain is None or rag_chain is False:
+        return {"status": "RAG not initialized, but history cleared."}
+        
     chat_history = []
     return {"status": "Chat history cleared."}
