@@ -1,12 +1,13 @@
 import os
-# The core google library used for client initialization
-# ...
+from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.vectorstores import Chroma
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
-# --- CHANGE THIS IMPORT LINE ---
 from langchain_text_splitters import RecursiveCharacterTextSplitter 
-from langchain.chains import ConversationalRetrievalChain
+# --- CHANGE THIS IMPORT LINE ---
+from langchain_chains import ConversationalRetrievalChain
 from fastapi import HTTPException 
+
+# ... (rest of the file remains the same)
 # ... (rest of the file remains the same)
 
 # --- Configuration ---
