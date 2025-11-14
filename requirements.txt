@@ -6,3 +6,4 @@ langchain-google-genai
 chromadb
 pypdf
 python-dotenv
+langchain-community
