@@ -3,9 +3,11 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.vectorstores import Chroma
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_text_splitters import RecursiveCharacterTextSplitter 
-# --- CHANGE THIS IMPORT LINE ---
-from langchain_chains import ConversationalRetrievalChain
+# --- CRITICAL FINAL IMPORT FIX: Revert chain import to core langchain ---
+from langchain.chains import ConversationalRetrievalChain 
 from fastapi import HTTPException 
+
+# ... (rest of the file remains the same)
 
 # ... (rest of the file remains the same)
 # ... (rest of the file remains the same)
