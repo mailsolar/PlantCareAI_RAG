@@ -1,5 +1,5 @@
 import os
-# The core google library we are having trouble with
+# The core google library used for client initialization
 from google import genai 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.vectorstores import Chroma
@@ -12,29 +12,28 @@ VECTOR_DB_DIR = "vector_db"
 POLICY_DIRECTORY_PATH = "policy/" 
 
 # --- Initialization ---
-# 1. Get API Key from environment variable. We check for the common names.
+# 1. Get API Key from environment variable (loaded by start.py on local, by Railway on prod)
+# We check for the common environment variable names.
 gemini_api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 
 if not gemini_api_key:
     # This check ensures the system stops immediately if the key is missing.
-    raise ValueError("API Key (GEMINI_API_KEY or GOOGLE_API_KEY) not found. Check your .env file.")
+    raise ValueError("API Key (GEMINI_API_KEY or GOOGLE_API_KEY) not found. Check your environment.")
 
 # 2. Force the key into the environment variable that LangChain is often hard-coded to check.
-# This is a defensive step against subtle library bugs.
+# This ensures the key is available to the entire Google client library stack.
 os.environ["GOOGLE_API_KEY"] = gemini_api_key 
 
-# 3. Initialize the clients with the key passed explicitly.
-# This is the final layer of defense.
+# 3. Initialize the clients. Since the key is set in os.environ, constructors are simple.
+# NOTE: The client is initialized implicitly using the GOOGLE_API_KEY.
 
 embeddings = GoogleGenerativeAIEmbeddings(
-    model="models/embedding-001",
-    api_key=gemini_api_key
+    model="models/embedding-001"
 ) 
 
 llm = ChatGoogleGenerativeAI(
     model="gemini-2.5-flash", 
-    temperature=0.1,
-    api_key=gemini_api_key
+    temperature=0.1
 )
 
 # Initialize chat history for the RAG chain
@@ -59,6 +58,7 @@ def create_vector_store():
             documents = loader.load()
             
             for doc in documents:
+                # Add source metadata for citation
                 doc.metadata['source'] = filename
             
             all_documents.extend(documents)
