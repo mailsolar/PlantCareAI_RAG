@@ -1,12 +1,10 @@
 import os
-# The core google library used for client initialization
-from google import genai 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.vectorstores import Chroma
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.chains import ConversationalRetrievalChain
-from fastapi import HTTPException # Used for handling uninitialized state
+from fastapi import HTTPException 
 
 # --- Configuration ---
 VECTOR_DB_DIR = "vector_db"
@@ -17,10 +15,11 @@ POLICY_DIRECTORY_PATH = "policy/"
 vectorstore = None
 rag_chain = None
 
-# --- Initialization Helpers (Unchanged Logic) ---
+# --- Initialization Helpers ---
 
 def get_gemini_api_key():
     """Gets the API key from environment variables, checking both common names."""
+    # Check for GEMINI_API_KEY first, then GOOGLE_API_KEY
     gemini_api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not gemini_api_key:
         raise ValueError("API Key (GEMINI_API_KEY or GOOGLE_API_KEY) not found. Check your environment.")
@@ -57,6 +56,7 @@ def create_vector_store(embeddings_client):
             documents = loader.load()
             
             for doc in documents:
+                # Add source metadata for citation
                 doc.metadata['source'] = filename
             
             all_documents.extend(documents)
@@ -124,7 +124,7 @@ def initialize_rag_components():
         print("RAG components fully initialized and ready for queries.")
     except Exception as e:
         print(f"CRITICAL RAG INITIALIZATION FAILURE: {e}")
-        # Setting rag_chain to False (or a specific error value) can prevent future crashes
+        # Set to False to signal permanent failure
         rag_chain = False 
 
 
@@ -138,7 +138,7 @@ def query_rag_system(question: str):
     global chat_history
     global rag_chain
     
-    # CRITICAL: If initialization is not complete, return a 503 error instead of crashing the server.
+    # CRITICAL: If initialization is not complete, throw an HTTP error.
     if rag_chain is None:
         raise HTTPException(
             status_code=503,
