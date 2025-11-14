@@ -1,0 +1,11 @@
+# Python environment
+venv/
+__pycache__/
+*.pyc
+*.swp
+
+# RAG/Chroma database (large, generated data)
+vector_db/
+
+# Sensitive keys
+.env
